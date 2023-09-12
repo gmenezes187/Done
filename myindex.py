@@ -8,7 +8,7 @@ from dash.dependencies import Input, Output
 from dash import Dash, html, dcc
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from app import *
-from components import sidebar, extratos, dashboards
+from components import sidebar, extratos, dashboards, dashboard_geral
 
 content = html.Div(id="page-content")
 
@@ -32,8 +32,10 @@ app.layout = dbc.Container(children=[
 
 @app.callback(Output('page-content', 'children'), [Input('url', 'pathname')])
 def render_page(pathname):
-    if pathname == '/' or pathname =='/dashboards': 
-        return dashboards.layout 
+    if pathname == '/' or pathname =='/dashboard_profissional': 
+        return dashboards.layout
+    elif  pathname =='/dashboard_geral': 
+        return dashboard_geral.layout
     
     if pathname == '/extratos':
         return extratos.layout

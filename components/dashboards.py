@@ -7,6 +7,8 @@ from app import app
 
 from datetime import datetime, date, timedelta
 import plotly.express as px
+import plotly.graph_objects as go
+
 import numpy as np
 import pandas as pd
 import dash_table
@@ -14,15 +16,6 @@ import dash_table
 from components import sidebar
 from utils import *
 
-df = pd.read_excel(r'Avec - Rel_31 - 2023-08-03T163756.008.xlsx')
-df = df.drop(['CPF', 'Celular', 'Telefone'], axis=1)
-df['Pacote'] = df['Pacote'].apply(lambda x: 'sim' if pd.isna(x) else 'nao')
-df['Profissional'] = df['Profissional'].apply(lambda x: 'Outros/Indef' if pd.isna(x) else x)
-
-clientes_s_visita = ranking_clientes(df)
-clientes_mais_recentes = clientes_s_visita.sort_values(by='Tempo Sem Visita (dias)')
-
-####
 df_base = pd.read_excel('Analise Carteira_D.ONE_UPDATED.xlsx', sheet_name='base_rec', skiprows= 2)
 df_base = df_base[['Profissional', 'Data Comanda', 'Número Comanda','Serviço', 'Categoria', 'Cliente', 'Qtd.', 'Valor', 'Desconto', 'Total']]
 df_base.dropna(inplace=True)
@@ -30,14 +23,11 @@ df_base['Data Comanda'] = pd.to_datetime(df_base['Data Comanda'])
 
 
 df = df_base.copy()
-
-# Ordenando o DataFrame pela coluna 'Data Comanda'
 df = df.sort_values(by='Data Comanda')
 
 # Agrupando por Cliente para obter as datas da primeira e última visita
 grouped = df.groupby('Cliente').agg({'Data Comanda': ['min', 'max']}).reset_index()
 grouped.columns = ['Cliente', 'primeira visita', 'última visita']
-
 unique_dates = df.drop_duplicates(['Cliente', 'Data Comanda'])[['Cliente', 'Data Comanda']]
 grouped2 = unique_dates.groupby('Cliente')['Data Comanda'].count().reset_index()
 grouped2.columns = ['Cliente', 'Visitas']
@@ -55,181 +45,238 @@ df['ano'] = df['Data Comanda'].dt.year
 df['mes'] = df['Data Comanda'].dt.month_name()
 df['dia da semana'] = df['Data Comanda'].dt.day_name()
 
-
 #--- LTV
 total_gasto = df.groupby('Cliente')['Total'].sum()
-
-# Calcular a quantidade de vezes que cada cliente realizou uma compra
 qtd_compras = df.groupby('Cliente')['Número Comanda'].nunique()
-
-# Calcular a média de tempo entre compras para cada cliente
 df['Tempo entre Compras'] = (df['última visita'] - df['primeira visita']).dt.days
 media_tempo_entre_compras = df.groupby('Cliente')['Tempo entre Compras'].mean()
-
-# Calcular o LTV para cada cliente
-ltv = (total_gasto / qtd_compras) * media_tempo_entre_compras
-
-# Adicionar o LTV calculado ao DataFrame original
+ltv = total_gasto#/qtd_compras
 df['LTV'] = df['Cliente'].map(ltv)
 
-
 df['Classificação'] = df.apply(classify, axis=1)
-print(df)
 
-
-
+data_seis_meses_atras = datetime.today() - timedelta(days=6*30)
+profissionais_com_valor = df[df['Data Comanda'] <= data_seis_meses_atras]['Profissional'].unique()
+mascara_profissionais_com_valor = df['Profissional'].isin(profissionais_com_valor)
+df = df[~mascara_profissionais_com_valor]
 
 ###
 
 layout = dbc.Col([
     dbc.Row([
+        html.H1("Por Profissional", style={
+        'textAlign':'left',
+        'color':'#C4956B',
+        'fontSize':'30px',
+        'font-weight': 'bold',
+        }),
+    ]),
+    dbc.Row([
         dbc.Col(
             dbc.Card(
                 dbc.CardBody(html.Div([
-                                dcc.Graph(id='line-chart')
+                                dcc.Graph(id='historico_by_classify', config={'displayModeBar': False})
                             ])),
-                style={"background-color": "#E8CAB1"}  # Altere aqui a cor de fundo desejada
+                style={"background-color": "#E8CAB1", "height": "auto", "margin": "0"}  
             )
         ),
-        dbc.Col([
-            #html.H1("Tempo sem ir ao salão", style = {'color':'black', 'fontSize':'18px', 'textAlign':'center','fontFamily': 'Cambria', 'fontWeight': 'bold'}),
+    ]),
+    html.Br(),
+    dbc.Row([
+        dbc.Col(
             dbc.Card(
-                dbc.CardBody(["Tempo de ausência",
-                                dash_table.DataTable(
-                                    id='tabela-clientes-s-visita',
-                                    columns=[
-                                        {'name': 'Cliente', 'id': 'Cliente'},
-                                        {'name': 'Profissional', 'id': 'Profissional'},
-                                        {'name': 'Dias', 'id': 'Tempo Sem Visita (dias)'},
-                                        #{'name': 'Pacote', 'id': 'Data Comanda'},
-                                    ],
-                                    data=df.to_dict('records'), 
-                                    page_size=5,
-                                    style_cell={'color': 'black', 'fontSize': '10px', 'textAlign': 'center'},
-                                    style_header={
-                                            'backgroundColor': '#C4956B',  # Cor de fundo dos nomes das colunas
-                                            'fontWeight': 'bold',
-                                            'textAlign': 'center',  # Fonte em negrito para os nomes das colunas
-                                            #'color': 'white',  # Cor do texto dos nomes das colunas
-                                        },
-                                    style_data_conditional=[
-                                        {
-                                            'if': {'row_index': 'odd'},  # Aplicar estilo em linhas ímpares
-                                            'backgroundColor': '#F7E8DA'  # Cor de fundo das linhas ímpares
-                                        },
-                                        {
-                                            'if': {'row_index': 'even'},  # Aplicar estilo em linhas pares
-                                            'backgroundColor': '#E8CAB1'  # Cor de fundo das linhas pares
-                                        },
-                                    ],
-                                    style_as_list_view=True,
-                                ),
-                              ]),
-                style={"background-color": "#E8CAB1", 'textAlign': 'center', 'fontSize': '16px', 'color':'black'} 
+                dbc.CardBody(html.Div([
+                                dcc.Graph(id='evolucao', config={'displayModeBar': False})
+                            ])),
+                style={"background-color": "#E8CAB1", "height": "auto", "margin": "0"}  
             )
-        ]),
-        dbc.Col([
-            #html.H1("Tempo sem ir ao salão", style = {'color':'black', 'fontSize':'18px', 'textAlign':'center','fontFamily': 'Cambria', 'fontWeight': 'bold'}),
+        ),
+    ]),
+    html.Br(),
+
+    dbc.Row([
+        dbc.Col(
             dbc.Card(
-                dbc.CardBody(["Clientes mais recentes",
-                                dash_table.DataTable(
-                                    id='tabela-clientes-mais_recente',
-                                    columns=[
-                                        {'name': 'Cliente', 'id': 'Cliente'},
-                                        {'name': 'Profissional', 'id': 'Profissional'},
-                                        {'name': 'Dias', 'id': 'Tempo Sem Visita (dias)'},
-                                        #{'name': 'Pacote', 'id': 'Data Comanda'},
-                                    ],
-                                    data=df.to_dict('records'), 
-                                    page_size=5,
-                                    style_cell={'color': 'black', 'fontSize': '10px', 'textAlign': 'center'},
-                                    style_header={
-                                            'backgroundColor': '#C4956B',  # Cor de fundo dos nomes das colunas
-                                            'fontWeight': 'bold',
-                                            'textAlign': 'center',  # Fonte em negrito para os nomes das colunas
-                                            #'color': 'white',  # Cor do texto dos nomes das colunas
-                                        },
-                                    style_data_conditional=[
-                                        {
-                                            'if': {'row_index': 'odd'},  # Aplicar estilo em linhas ímpares
-                                            'backgroundColor': '#F7E8DA'  # Cor de fundo das linhas ímpares
-                                        },
-                                        {
-                                            'if': {'row_index': 'even'},  # Aplicar estilo em linhas pares
-                                            'backgroundColor': '#E8CAB1'  # Cor de fundo das linhas pares
-                                        },
-                                    ],
-                                    style_as_list_view=True,
-                                ),
-                              ]),
-                style={"background-color": "#E8CAB1", 'textAlign': 'center', 'fontSize': '16px', 'color':'black'} 
+                dbc.CardBody(html.Div([
+                                dcc.Graph(id='comparacao_categoria', config={'displayModeBar': False})
+                            ])),
+                style={"background-color": "#E8CAB1", "height": "auto", "margin": "0"}  
             )
-        ]),
+        ),
+        dbc.Col(
+            dbc.Card(
+                dbc.CardBody(html.Div([
+                                dcc.Graph(id='comparacao_servico', config={'displayModeBar': False})
+                            ])),
+                style={"background-color": "#E8CAB1", "height": "auto", "margin": "0"}  
+            )
+        )
     ])
 ])
 
-@app.callback(
-    Output('tabela-clientes-s-visita', 'data'),
-    Input('filtro-classe-cliente', 'value')
-)
-def atualizar_tabela_por_classe(value):
-    if value == 'Todos':
-        return clientes_s_visita.to_dict('records')
-    else:
-        filtered_df = clientes_s_visita[clientes_s_visita['classe'] == value]
-        return filtered_df.to_dict('records')
-    
-@app.callback(
-    Output('tabela-clientes-mais_recente', 'data'),
-    Input('filtro-classe-cliente', 'value')
-)
-def atualizar_tabela_por_classe(value):
-    if value == 'Todos':
-        return clientes_mais_recentes.to_dict('records')
-    else:
-        filtered_df = clientes_mais_recentes[clientes_mais_recentes['classe'] == value]
-        return filtered_df.to_dict('records')
-    
 
 @app.callback(
-    Output('line-chart', 'figure'),
-    Input('input-dropdown', 'value')  # Adicione aqui os inputs que deseja utilizar
+    Output('historico_by_classify', 'figure'),
+    Input('input-dropdown-profissional', 'value') ,
+    Input('input-dropdown-date-range', 'start_date'),
+    Input('input-dropdown-date-range', 'end_date') 
 )
-def update_line_chart(ano):  # Adicione os parâmetros que deseja receber
-    ano = datetime.now().year
-    df_ano = filter_date(df.copy(), f'{ano}-01-01', f'{ano}-12-31')
-    df_ano = df_ano.groupby(['ano', 'mes'])[['dia da semana']].count()
-    df_ano = df_ano.rename(columns={'dia da semana': f'{ano}'})
-    df_ano.reset_index(inplace=True)
-    df_ano = df_ano.rename(columns={'mes': 'Mes'})
+def update_line_chart(Profissional, begin_date, end_date):
+    df2 = filter_date(df.copy(), begin_date, end_date )
+    graf1 = df2.groupby(['Profissional', 'ano-mes', 'Classificação'])[['Total']].sum().reset_index()
+    graf1 = graf1[graf1['Profissional'] == Profissional]
 
-    ano_anterior = ano - 1
-    df_ano_anterior = filter_date(df.copy(), f'{ano_anterior}-01-01', f'{ano_anterior}-12-31')
-    df_ano_anterior = df_ano_anterior.groupby(['ano', 'mes'])[['dia da semana']].count()
-    df_ano_anterior = df_ano_anterior.rename(columns={'dia da semana': f'{ano_anterior}'})
-    df_ano_anterior.reset_index(inplace=True)
+    # Transforme a coluna 'ano-mes' em um objeto de data
+    graf1['data'] = graf1['ano-mes'].apply(lambda x: str(x) + '-01')
+    graf1['data'] = pd.to_datetime(graf1['data'])
 
-    comp = pd.concat([df_ano, df_ano_anterior], axis=1)
-    comp = comp[['mes', f'{ano}', f'{ano_anterior}']]
+    cores_personalizadas = ['#FF5733', '#33FF57', '#3366FF', '#FF33A1']
+    ordem_categorias = ['Campeões (High Profile)', 'Clientes fiéis', 'Clientes precisando de atenção', 'Em risco_High_LTV', 'Em risco_Low_LTV', 'FIéis em potencial', 'Outra classificação']
 
-    fig_comparacao = px.line(comp, x='mes', y=[f'{ano}', f'{ano_anterior}'])
+    fig = px.bar(graf1, x='data', y='Total', color='Classificação',
+                title='Total arrecadado por Classificação ao longo do Tempo',
+                labels={'Total': 'Total Arrecadado'},
+                facet_col='Profissional',
+                color_discrete_sequence=cores_personalizadas,
+                category_orders={"Classificação": ordem_categorias})
 
-    colors = ['#C4956B', '#F7E8DA']  # Defina as cores das linhas aqui
-    for i, color in enumerate(colors):
-        fig_comparacao.update_traces(
-            line=dict(color=color),
-            selector=dict(name=f'{ano}' if i == 0 else f'{ano_anterior}')
-        )
+    fig.update_traces(marker_line_width=0.5, marker_line_color='black', selector=dict(type='bar'))
+    fig.update_layout(barmode='relative', template = 'plotly_white',
+                    margin=dict(t=20, r=0, b=0, l=0),
+                    plot_bgcolor='rgba(0,0,0,0)',  # Define a cor de fundo do gráfico (transparente)
+                    paper_bgcolor='rgba(0,0,0,0)') # Define a cor de fundo do papel (transparente))
+    fig.update_xaxes(title=None, tickformat='%Y-%m')
+    fig.update_yaxes(title='Receita', gridwidth=0.1)
+    fig.update_layout(title=None)
+    fig.update_layout(autosize=True, height=200)
 
-    fig_comparacao.update_layout(
-        xaxis_title=None,
-        yaxis_title='Quantidade de clientes',
-        template='none',  # Define o tema escuro
-        plot_bgcolor='rgba(0,0,0,0)',  # Define a cor de fundo do gráfico (transparente)
-        paper_bgcolor='rgba(0,0,0,0)'  # Define a cor de fundo do papel (transparente)
+    return fig
+
+@app.callback(
+    Output('comparacao_categoria', 'figure'),
+    Input('input-dropdown-profissional', 'value'),
+    Input('input-dropdown-legend', 'value'),
+    Input('input-dropdown-date-range', 'start_date'),
+    Input('input-dropdown-date-range', 'end_date')
+)
+def update_graph2(Profissional, legend, begin_date, end_date):
+    receita_por_categoria = filter_date(df.copy(), begin_date, end_date )
+    if legend == 'Receita':
+        receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Categoria'])['Total'].sum().reset_index()
+    elif legend == 'Quantidade':
+            receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Categoria'])['Total'].count().reset_index()
+
+    receita_por_categoria.columns = ['Profissional','Categoria', f'{legend}']
+
+    total_por_categoria = receita_por_categoria.groupby('Categoria')[f'{legend}'].sum().reset_index()
+    total_por_categoria['Profissional'] = 'Total'
+    receita_por_categoria = pd.concat([receita_por_categoria, total_por_categoria], ignore_index=True)
+
+
+    receita_por_categoria = receita_por_categoria[(receita_por_categoria['Profissional'] == Profissional) | (receita_por_categoria['Profissional'] == 'Total')]
+
+    fig = px.bar(receita_por_categoria, x='Categoria', y=f'{legend}', color='Profissional',
+                labels={f'{legend}': f'{legend} Total'}, barmode='group')
+
+    fig.update_traces(marker_line_width=0.5, marker_line_color='black', selector=dict(type='bar'))
+    fig.update_layout(barmode='group', template = 'plotly_white',
+                    margin=dict(t=20, r=0, b=0, l=0),
+                    plot_bgcolor='rgba(0,0,0,0)',  # Define a cor de fundo do gráfico (transparente)
+                    paper_bgcolor='rgba(0,0,0,0)') # Define a cor de fundo do papel (transparente))
+    fig.update_layout(autosize=True, height=300)
+    fig.update_xaxes(tickangle=30)
+
+
+    return fig
+
+@app.callback(
+    Output('comparacao_servico', 'figure'),
+    Input('input-dropdown-profissional', 'value'),
+    Input('input-dropdown-legend', 'value'),
+        Input('input-dropdown-date-range', 'start_date'),
+    Input('input-dropdown-date-range', 'end_date')
+)
+def update_graph3(Profissional, legend, begin_date, end_date):
+    receita_por_categoria = filter_date(df.copy(), begin_date, end_date )
+    if legend == 'Receita':
+        receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Serviço'])['Total'].sum().reset_index()
+    elif legend == 'Quantidade':
+            receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Serviço'])['Total'].count().reset_index()
+
+    receita_por_categoria.columns = ['Profissional','Serviço', f'{legend}']
+
+    total_por_categoria = receita_por_categoria.groupby('Serviço')[f'{legend}'].sum().reset_index()
+    total_por_categoria['Profissional'] = 'Total'
+    receita_por_categoria = pd.concat([receita_por_categoria, total_por_categoria], ignore_index=True)
+
+
+    receita_por_categoria = receita_por_categoria[(receita_por_categoria['Profissional'] == Profissional)]
+
+    fig = px.bar(receita_por_categoria, x='Serviço', y=f'{legend}', color='Profissional',
+                labels={f'{legend}': f'{legend}'}, barmode='group')
+
+    fig.update_traces(marker_line_width=0.5, marker_line_color='black', selector=dict(type='bar'))
+    fig.update_layout(barmode='relative', template = 'plotly_white',
+                    margin=dict(t=20, r=0, b=0, l=0),
+                    plot_bgcolor='rgba(0,0,0,0)',  # Define a cor de fundo do gráfico (transparente)
+                    paper_bgcolor='rgba(0,0,0,0)') # Define a cor de fundo do papel (transparente))
+    fig.update_layout(autosize=True, height=300)
+    fig.update_xaxes(tickangle=30)
+
+
+    return fig
+
+@app.callback(
+    Output('evolucao', 'figure'),
+    Input('input-dropdown-profissional', 'value'),
+    Input('input-dropdown-legend', 'value'),
+        Input('input-dropdown-date-range', 'start_date'),
+    Input('input-dropdown-date-range', 'end_date')
+)
+def update_graph4(Profissional, legend, begin_date, end_date):
+    receita_por_categoria = filter_date(df.copy(), begin_date, end_date )
+    if legend == 'Receita':
+        receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Data Comanda'])['Total'].sum().reset_index()#.set_index('Categoria').T
+    elif legend == 'Quantidade':
+        receita_por_categoria  = receita_por_categoria.groupby(['Profissional','Data Comanda'])['Total'].count().reset_index()#.set_index('Categoria').T
+    receita_por_categoria.columns = ['Profissional','Data', f'{legend}']
+    receita_por_categoria[f'{legend} Acumulada'] = receita_por_categoria.groupby('Profissional')[f'{legend}'].cumsum()
+    receita_por_categoria = receita_por_categoria[(receita_por_categoria['Profissional'] == Profissional)]
+
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=receita_por_categoria['Data'],
+        y=receita_por_categoria[f'{legend}'],
+        name=f'{legend} Diária',
+        marker_color='grey',
+        showlegend=False  # Remove a legenda para este traço
+    ))
+
+    # Adicione a linha para a receita acumulada no eixo direito sem legenda
+    fig.add_trace(go.Scatter(
+        x=receita_por_categoria['Data'],
+        y=receita_por_categoria[f'{legend} Acumulada'],
+        name=f'{legend} Acumulada',
+        yaxis='y2',  # Use o eixo secundário (y2)
+        line=dict(color='black'),
+        showlegend=False  # Remove a legenda para este traço
+    ))
+
+    # Atualize os rótulos dos eixos
+    fig.update_layout(
+                        xaxis=dict(title='Data'),
+                        yaxis=dict(title=f'{legend} Diária', color='black'),
+                        yaxis2=dict(title=f'{legend} Acumulada', color='gray', overlaying='y', side='right'),
     )
 
-    fig_comparacao.update_xaxes(gridwidth=0.2)  # Define a espessura das linhas de grade do eixo X
-    fig_comparacao.update_yaxes(gridwidth=0.2)
 
-    return fig_comparacao
+
+    fig.update_traces(marker_line_width=0.5, marker_line_color='black', selector=dict(type='bar'))
+    fig.update_layout(barmode='relative', template = 'plotly_white',
+                    margin=dict(t=20, r=0, b=0, l=0),
+                    plot_bgcolor='rgba(0,0,0,0)',  # Define a cor de fundo do gráfico (transparente)
+                    paper_bgcolor='rgba(0,0,0,0)') # Define a cor de fundo do papel (transparente))
+    fig.update_layout(autosize=True, height=300)
+    #fig.update_xaxes(tickangle=30)
+    return fig
